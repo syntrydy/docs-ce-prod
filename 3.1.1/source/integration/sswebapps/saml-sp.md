@@ -2,28 +2,30 @@
 
 ## Apache SAML
 
-## Configuring Apache Shibboleth SP in CentOS
+## Configuring Apache Shibboleth SP in CentOS 7
 
 ### System Preparation
 
-__Add Shibboleth repository for CentOS__
+__Add Shibboleth repository for CentOS 7__
 
-* The file `shib.repo` contains the following entry:
+* Create a repo file in `/etc/yum.repos.d` directory (in my case i named the file "Shibboleth.repo").
+* Paste the bellow content in that file and save it.
 
 ```
 [security_shibboleth]
-name=Shibboleth (CentOS_CentOS-6)
+name=Shibboleth (CentOS_7)
 type=rpm-md
-baseurl=http://download.opensuse.org/repositories/security:/shibboleth/CentOS_CentOS-6/
+baseurl=http://download.opensuse.org/repositories/security:/shibboleth/CentOS_7/
 gpgcheck=1
-gpgkey=http://download.opensuse.org/repositories/security:/shibboleth/CentOS_CentOS-6/repodata/repomd.xml.key
+gpgkey=http://download.opensuse.org/repositories/security:/shibboleth/CentOS_7/repodata/repomd.xml.key
 enabled=1
 ```
 
-* Download the Shibboleth security repo key from here:
+* Add and import Shibboleth GPG repo key:
 
 ```
-http://download.opensuse.org/repositories/security:/shibboleth/CentOS_CentOS-6/security:shibboleth.repo
+ # wget http://download.opensuse.org/repositories/security:/shibboleth/CentOS_7/repodata/repomd.xml.key -O /etc/pki/rpm-gpg/RPM-GPG-KEY-SHIBBOLETH
+ # rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-SHIBBOLETH
 ```
 
 ### Shibboleth SP Installation
@@ -31,23 +33,34 @@ http://download.opensuse.org/repositories/security:/shibboleth/CentOS_CentOS-6/s
 To install the Shibboleth SP, run the following commands in a terminal:
 
 ```
-# yum install shibboleth
-# service shibd start
-# chkconfig shibd on
+# yum install -y shibboleth
+# systemctl start shibd
+# systemctl status shibd
+# systemctl enable shibd
 ```
 
 ### Install and Configure httpd
 #### Installation
 
-The following commands will both install, and start the Apache web
-server on your machine/Linux environment:
+The following commands will both install and start the Apache web:
 
 ```
-# yum install httpd
-# service httpd start
-# service iptables stop 
+# yum install -y httpd
+# systemctl start httpd
+# systemctl status httpd
+# systemctl enable httpd
+
 ```
 
+### Disable system firewall(firewalld or iptables):
+
+```
+# systemctl stop firewalld
+# systemctl disable firewalld
+or 
+# systemctl stop iptables
+# systemctl disable iptables
+```
 #### Configuration
 
 Edit the file `httpd.conf`, and do the following changes:
@@ -56,68 +69,162 @@ Edit the file `httpd.conf`, and do the following changes:
 
 * Set `UseCanonicalName On`.
 
-* Restart the httpd service using the command `service httpd restart`.
+* Restart the httpd service using the command `systemctl restart httpd`.
 
-#### Httpd Testing
+#### Httpd testing
 
 * Create an `index.html` file inside the directory `/var/www/html`.
 
-* Restart the httpd service using the command `service httpd restart`.
+* Restart the httpd service using the command `systemctl restart httpd`.
 
-* Check from your browser if the file `index.html` is visible.
+* Check from your browser if the file `index.html` is visible. For example visit `http://127.0.0.1:80` from your browser.
 
-#### SP Key Certificate
+#### SP private key and certificate
 
 * Create both a private key, and a certificate, and place those in the
   file `/etc/shibboleth`.
 
 * Change the permissions of these files so that the web server can read
   the files.
+  
+NB: For testing purpose you can follow the bellow setps to generate private key and certificate file, replace all occurences of `hostname` with your SP hostname. Also replace all occurences of `yourKey` with a proper and more intuitive name.
+```
+# cd /etc/shibboleth
+# openssl genrsa -des3 -out yourKey.key 2048
+# openssl rsa -in yourKey.key -out yourKey.key.insecure
+# mv yourKey.key.insecure yourKey.key
+# openssl req -new -key yourKey.key -out yourKey.csr
+# openssl x509 -req -days 365 -in yourKey.csr -signkey yourKey.key -out yourKey.crt
 
-### Shibboleth SP Configuration
+```
+* Generate SP metadataxml file
+```
+# ./metagen -c yourKey.crt -h hostname > /etc/shibboleth/hostname-metadata.xml
+```
+* Upload the SP metadata file (in this case `/etc/shibboleth/hostname-metadata.xml` in the IDP provider(Gluu Server) host. 
+  You can do that using `scp` command or any order mean.	
 
-This section describes how to configure the file `shibboleth2.xml`.
+### Shibboleth SP configuration
 
-* Provide the `entityID` of the according SP in:
+* Make a copy of your shibboleth config file: `# cp /etc/shibboleth2.xml /etc/shibboleth2.xml.save`
+* Replace the content of the original one with the content bellow.
+* Replace `hostname` with the hostname of your SP, and `idphostname` with the hostname of your IDP.
+  Also replace `idpMetaDataFile` with your IDP metadata file and make sure this file is readable by shibboleth proocess. 
+  If your IDP is Gluu Server then the file is accessible at `https://yourGluuHostname/idp/shibboleth`.
+
+```
+<SPConfig xmlns="urn:mace:shibboleth:2.0:native:sp:config"
+    xmlns:conf="urn:mace:shibboleth:2.0:native:sp:config"
+    xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+    xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"    
+    xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+    logger="syslog.logger" clockSkew="180">
+    <OutOfProcess logger="shibd.logger"></OutOfProcess>
+    <UnixListener address="shibd.sock"/>
+    <StorageService type="Memory" id="mem" cleanupInterval="900"/>
+    <SessionCache type="StorageService" StorageService="mem" cacheAssertions="false"
+                  cacheAllowance="900" inprocTimeout="900" cleanupInterval="900"/>
+    <ReplayCache StorageService="mem"/>
+    <RequestMapper type="Native">
+        <RequestMap>
+            <Host name="hostname">
+                <Path name="protected" authType="shibboleth" requireSession="true"/>
+            </Host>
+        </RequestMap>
+    </RequestMapper>
+    <ApplicationDefaults entityID="https://hostname/shibboleth"
+                         REMOTE_USER="uid"
+                         metadataAttributePrefix="Meta-"
+                         sessionHook="/Shibboleth.sso/AttrChecker"
+                         signing="false" encryption="false">
+
+        <Sessions lifetime="28800" timeout="3600" checkAddress="true"
+            handlerURL="/Shibboleth.sso" handlerSSL="true" cookieProps="https" relayState="ss:mem">
+          
+            <SessionInitiator type="Chaining" Location="/Login" isDefault="true" id="Login"
+                              entityID="https://idphostname/idp/shibboleth">
+                <SessionInitiator type="SAML2" template="bindingTemplate.html"/>
+            </SessionInitiator>
+            
+            <md:AssertionConsumerService Location="/SAML2/POST-SimpleSign" index="2"
+                Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST-SimpleSign"/>
+            <md:AssertionConsumerService Location="/SAML2/POST" index="1"
+                Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"/>
+
+            <LogoutInitiator type="Chaining" Location="/Logout">
+                <LogoutInitiator type="SAML2" template="bindingTemplate.html"/>
+                <LogoutInitiator type="Local"/>
+            </LogoutInitiator>
+
+            <md:SingleLogoutService Location="/SLO/Redirect" conf:template="bindingTemplate.html"
+                Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"/>
+            <md:SingleLogoutService Location="/SLO/POST" conf:template="bindingTemplate.html"
+                Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"/>
+
+            <Handler type="Status" Location="/Status"/>
+            <Handler type="Session" Location="/Session" showAttributeValues="false"/>
+            <Handler type="AttributeChecker" Location="/AttrChecker" template="attrChecker.html"
+                attributes="uid" flushSession="true"/>
+        </Sessions>
+
+        <Errors supportContact="root@localhost"
+            helpLocation="/about.html"
+            styleSheet="/shibboleth-sp/main.css"/>
+        
+        <MetadataProvider type="XML" file="idpMetaDataFile.xml"/>
+        <TrustEngine type="ExplicitKey"/>
+        <TrustEngine type="PKIX"/>
+        <AttributeExtractor type="XML" validate="true" reloadChanges="false" path="attribute-map.xml"/>
+        <AttributeExtractor type="Metadata" errorURL="errorURL" DisplayName="displayName"/>
+        <AttributeResolver type="Query" subjectMatch="true"/>
+        <AttributeFilter type="XML" validate="true" path="attribute-policy.xml"/>
+        <CredentialResolver type="File" key="yourKey.key" certificate="yourKey.crt"/>
+    </ApplicationDefaults>
+    <SecurityPolicyProvider type="XML" validate="true" path="security-policy.xml"/>
+    <ProtocolProvider type="XML" validate="true" reloadChanges="false" path="protocols.xml"/>
+</SPConfig>
+```
+* Make sure the following sections in this file(`/etc/shibboleth2.xml`) are correct.
 	
-	* `<ApplicationDefaults entityID="http://sp.example.org/Shibboleth"> section`
+ 1. The SP entity id : `<ApplicationDefaults entityID="http://yoursphostname/Shibboleth">` section.
+ 1. The IDP entity id : `<SSO entityID="https://youridphostname/idp/shibboleth"> section` section.
+ 1. The IDP metadata file: ` <MetadataProvider type="XML" file="idpMetaDataFile.xml"/>` section.
+ 1. The SP key and certificate : `<CredentialResolver type="File" key="yourKey.key/" certificate="yourkey.crt"/>` section.
 
-* Provide the `entityID` of the IdP in:
-
-	* `<SSO entityID="https://idp.gluu.org/idp/shibboleth"> section`
-
-* Adjust the entry of the metadata provider. In most cases this is the
-  Gluu IdP metadata link:
-
-	* `<MetadataProvider type="XML" uri="https://idp.gluu.org/idp/shibboleth"> section`
-
-* Provide both the key and certificate of the SP in:
-
-	* `<CredentialResolver type="File" key="spkey.key" certificate="spcrt.crt"> section`
-
-### Shibboleth Manual Configuration (one Physical SP):
+### Secure an apache web directory using shibboleth:
 
 * Create a directory named under `/var/www/secure`.
 
 * Change the permissions for that directory `secure` to
   `apache:apache` (owner and group of the web server).
 
-* `httpd.conf`
+* Configure apache(configuration file `/etc/httpd/conf/httpd.conf`)
 
-	* change the ServerName `<hostname_of_server>`
+	* Change the ServerName to match your hostname.
 
-	* Define the Location, and the authorization type:
+	* Define the Directory directive and the authorization type:
 
-		```
-		<Location /secure>
-			AuthType shibboleth
-			ShibRequestSetting requireSession 1
-			ShibUseHeaders on
-			Require valid-user
-		</Location>
-		```
+	```
+	<Directory "/var/www/secure">
+        	AuthType shibboleth
+       		ShibRequestSetting requireSession 1 
+        	ShibUseHeaders On 
+        	Require valid-user
+        </Directory>
 
-* configure `shibboleth2.xml`
+	```
+* Paste the bellow content into file `/etc/shibboleth/attribute-map.xml`:
+
+```
+<Attributes xmlns="urn:mace:shibboleth:2.0:attribute-map" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <Attribute name="urn:oid:2.5.4.42" id="givenName"/>
+    <Attribute name="urn:oid:2.5.4.4" id="sn"/>
+    <Attribute name="urn:oid:2.16.840.1.113730.3.1.241" id="displayName"/>
+    <Attribute name="urn:oid:0.9.2342.19200300.100.1.1" id="uid"/>
+</Attributes>
+``` 
+
+* Configure `shibboleth2.xml`
 
 	* Set the EntityID of the SP: `ApplicationDefaults entityID="http://hostname/secure"`
 
@@ -128,11 +235,11 @@ This section describes how to configure the file `shibboleth2.xml`.
 * Restart both shibd and Apache2 using these lines:
 
 ```
-service shibd restart
-service httpd restart
+#systemctl restart shibd
+#systemctl restart httpd
 ```
-
 * Create a Trust Relationship for this SP in your desired IdP.
+* Test by visiting the `/secure` (for example `http://localhost/secure` from your prefer browser. You will be prompt the log in. Just provide your credentials and enjoy :clap:.
 
 ## Super Quick Ubuntu Shib Apache Install
 
@@ -162,7 +269,7 @@ These are the steps to configure your Apache webserver properly:
 # service shibd start
 ```
 
-Download `yourKey-metadata.xml` to your machine. You will need this file
+Upload `yourKey-metadata.xml` to your Gluu Server host. You will need this file
 later when you create the Trust Relationship in the Gluu Server.
 
 ```
@@ -424,9 +531,9 @@ initial admin password). The output will contain something like this:
  - Clear the cookies in your web browser for both the Apache site, and 
    the Gluu Server if you are logging in and logging out a lot with 
    lots of server restarts.
- - If you get error saying that "The ip address your are using is different that the 
-   one your are trying to authenticad with"  then  go inside the file named 
-   `/etc/shibboleth2.xml` and set the value of attribute `checkAddress`  to `false`.
+ - If you get error saying that "The ip address your are using is different from the 
+   one your are trying to authenticad with"  then go inside the file named 
+   `/etc/shibboleth2.xml` and set the value of attribute `checkAddress` to `false`.
 
 ## IIS SAML Configuration
 
