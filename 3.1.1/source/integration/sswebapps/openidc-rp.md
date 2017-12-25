@@ -1,6 +1,6 @@
 # mod_auth_openidc RP Integration
 
-## Basic Web Server Installation
+## Setup process on Ubuntu 16.04 LTS
 
 Before you can install mod_auth_openidc, you need to have an Apache
 HTTPD server running with SSL enabled. 
@@ -16,7 +16,7 @@ to install the Ubuntu standard distribution:
 
 ``` text
 # apt-get install apache2
-# service apache2 start
+# systemctl start apache2
 ```
 
 ### SSL Configuration
@@ -29,10 +29,10 @@ use the following commands to activate the `ssl module`.
 
 The next step is to create a self-signed SSL Certificate.
 
-* Create a directory to put the generate the ssl certificate
+* Create a directory to put the generate key and ssl certificate file
 
 ``` text
-# mkdir /etc/apache2/ssl`
+# mkdir /etc/apache2/ssl
 # openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/apache2/ssl/apache.key -out /etc/apache2/ssl/apache.crt
 ```
 
@@ -54,7 +54,7 @@ use the SSL module
 1. Open the `default-ssl.conf` file
 
 ``` text
-# vim /etc/apache2/sites-available/default-ssl.conf`
+# vim /etc/apache2/sites-available/default-ssl.conf
 
 ```
 
@@ -66,36 +66,80 @@ use the SSL module
 ``` text
 # a2ensite default-ssl.conf
 # a2enmod cgid
-# service apache2 restart
+# systemctl restart apache2 
+
+```
+#### Create a simple CGI script for testing purpose
+This test script is a good way to ensure CGI module is loaded! 
+
+``` text
+# vi /usr/lib/cgi-bin/printHeaders.cgi
+
+```
+
+Then paste the code bellow in that file.
+
+``` python
+#!/usr/bin/python
+
+import os
+
+d = os.environ
+k = d.keys()
+k.sort()
+
+print "Content-type: text/html\n\n"
+
+print "<HTML><Head><TITLE>Print Env Variables</TITLE></Head><BODY>"
+print "<h1>Environment Variables</H1>"
+for item in k:
+    print "<p><B>%s</B>: %s </p>" % (item, d[item])
+print "</BODY></HTML>"
+
+```
+
+Then you'll need to make the script executable by the Apache2
+
+``` text
+# chown www-data:www-data /usr/lib/cgi-bin/printHeaders.cgi
+# chmod ug+x /usr/lib/cgi-bin/printHeaders.cgi
+
+```
+Then restart apache and check its status
+
+``` text
+# systemctl restart apache2 
+# systemctl statys apache2 
 
 ```
 
 At this point, its a good time to test to make sure SSL and CGI are 
 working. Point your browser at 
 https://www.mydomain.com/cgi-bin/printHeaders.cgi
-You should see a list of current environment variables. 
+You should see a list of current environment variables. Oh cool :clap:. 
+Now let go to the next step.
 
-## Configuration of mod_auth_openidc 
+## Installation and configuration of mod_auth_openidc 
 
 ### Installation
 
 `mod_auth_openidc` module depends on the Ubuntu package `libjansson4`: 
 
 ``` text
+# apt-get update
 # apt-get install libjansson
-
 ```
+If the package isn't available, make a simple google search on how to install libjanson. You may get broken depencies error, in that case use `apt-get install -f` to fix that.
 
-You'll also need the mod_auth_openidc and libjose packages which can 
-be downloaded from the [Releases Page](https://github.com/zmartzone/mod_auth_openidc/releases).
+You'll also need the mod_auth_openidc be downloaded from the [Releases Page](https://github.com/zmartzone/mod_auth_openidc/releases) and libjose packages which can be downloaded from this [link](https://ubuntu.pkgs.org/17.04/ubuntu-universe-amd64/libcjose0_0.4.1-3ubuntu1_amd64.deb.html).
 
-For example, at this time the current release is 2.1.3, so the command would be:
+For example, at this time the current release for mod_auth_openidc is is 2.3.3, so the command would be:
 
 ``` text
-# wget https://github.com/pingidentity/mod_auth_openidc/releases/download/v2.1.3/libcjose_0.4.1-1ubuntu1.trusty.1_amd64.deb
-# wget https://github.com/pingidentity/mod_auth_openidc/releases/download/v2.1.3/libapache2-mod-auth-openidc_2.1.3-1ubuntu1.trusty.1_amd64.deb
-# dpkg -i libcjose_0.4.1-1ubuntu1.trusty.1_amd64.deb
-# dpkg -i libapache2-mod-auth-openidc_2.1.3-1ubuntu1.trusty.1_amd64.deb
+# wget https://github.com/zmartzone/mod_auth_openidc/releases/download/v2.3.3/libapache2-mod-auth-openidc_2.3.3-1.xenial.1_amd64.deb
+# wget http://archive.ubuntu.com/ubuntu/pool/universe/c/cjose/libcjose0_0.4.1-3ubuntu1_amd64.deb
+# dpkg -i libcjose0_0.4.1-3ubuntu1_amd64.deb
+# dpkg -i libapache2-mod-auth-openidc_2.3.3-1.xenial.1_amd64.deb
 
 ```
 
@@ -108,7 +152,7 @@ Now you can enable the module
 
 ``` text
 # sudo a2enmod auth_openidc
-# sudo service apache2 restart
+# sudo systemctl restart apache2 
 
 ```
 
